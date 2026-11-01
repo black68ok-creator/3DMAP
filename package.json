@@ -1,0 +1,18 @@
+{
+  "name": "byeolbit-campground",
+  "private": true,
+  "version": "2.0.0",
+  "description": "별빛 캠핑장 — 여러 명이 함께 노는 3D 캠핑장",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --format=iife --minify --target=es2020 --outfile=app.js",
+    "serve": "python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "@dgreenheck/ez-tree": "1.1.0",
+    "three": "0.170.0",
+    "trystero": "0.25.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0"
+  }
+}
