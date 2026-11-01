@@ -19,6 +19,7 @@ const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 const r2 = (v) => Math.round(v * 100) / 100;
 const angDiff = (a, b) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
 const IN_CLAUDE = !!(window.claude && window.claude.use);
+const M = (n) => `assets/${n}${IN_CLAUDE ? '.gltf.json' : '.glb'}`; // 아티팩트는 .glb를 서빙하지 않음
 const coarse = matchMedia('(pointer: coarse)').matches;
 let quality = store.get('camp.quality') || (coarse ? 'low' : 'high');
 
@@ -53,8 +54,8 @@ const wind = new THREE.Vector2(0.15, 0.05);
 
 async function boot() {
   const [xbot, grassG, fw, fy, fb, r1, r2g, r3, tGrass, tDirt, tDirtN, tWater, tMoon, tSmoke, tSpark] = await Promise.all([
-    gltfL.loadAsync('assets/Xbot.glb'), gltfL.loadAsync('assets/grass.glb'), gltfL.loadAsync('assets/flower_white.glb'), gltfL.loadAsync('assets/flower_yellow.glb'), gltfL.loadAsync('assets/flower_blue.glb'),
-    gltfL.loadAsync('assets/rock1.glb'), gltfL.loadAsync('assets/rock2.glb'), gltfL.loadAsync('assets/rock3.glb'),
+    gltfL.loadAsync(M('Xbot')), gltfL.loadAsync(M('grass')), gltfL.loadAsync(M('flower_white')), gltfL.loadAsync(M('flower_yellow')), gltfL.loadAsync(M('flower_blue')),
+    gltfL.loadAsync(M('rock1')), gltfL.loadAsync(M('rock2')), gltfL.loadAsync(M('rock3')),
     loadTex('assets/grass.jpg'), loadTex('assets/dirt_color.jpg'), loadTex('assets/dirt_normal.jpg', false), loadTex('assets/waternormals.jpg', false),
     loadTex('assets/moon.jpg'), loadTex('assets/smoke.png'), loadTex('assets/spark.png'),
   ]);
