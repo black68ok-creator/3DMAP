@@ -6,7 +6,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { LAKE, WATER_Y, WORLD_R, obstacles, SEATS, heightAt, glowTex, createSky, createGround, createLake, createForest, createGrass, createRocks, createTents, createProps, createFireflies } from './world.js';
 import { createCampfire } from './fire.js';
-import { setAvatarAsset, createAvatar, updateAvatar, setLabel, say, react, playEmote, disposeAvatar } from './avatar.js';
+import { setAvatarAsset, createAvatar, updateAvatar, setLabel, say, react, playEmote, disposeAvatar, setFace } from './avatar.js';
+import { createPhotoEditor } from './photo.js';
 import { connectNet } from './net.js';
 import { createSound } from './sound.js';
 
@@ -90,8 +91,9 @@ async function boot() {
 
   // 나
   const myNick0 = (store.get('camp.nick') || '').slice(0, 12) || '캠퍼' + Math.floor(100 + Math.random() * 900);
-  const myColor0 = COLORS.includes(store.get('camp.color')) ? store.get('camp.color') : COLORS[Math.floor(Math.random() * COLORS.length)];
+  const myColor0 = /^#[0-9a-f]{6}$/i.test(store.get('camp.color') || '') ? store.get('camp.color') : COLORS[Math.floor(Math.random() * COLORS.length)];
   me = createAvatar(scene, myColor0, myNick0);
+  loadSavedFace();
   const a0 = Math.random() * Math.PI * 2; me.x = Math.sin(a0) * 8; me.z = Math.cos(a0) * 8; me.ry = Math.atan2(-me.x, -me.z);
   me.vy = 0; me.grounded = true;
   camYaw = a0;
@@ -195,6 +197,7 @@ function act(kind) {
     case 'quality': quality = quality === 'high' ? 'low' : 'high'; store.set('camp.quality', quality); applyQuality(); toast(quality === 'high' ? '그래픽: 고품질' : '그래픽: 가볍게 (일부는 새로고침 후 적용)'); break;
     case 'photo': takePhoto(); break;
     case 'voice': toggleVoice(); break;
+    case 'avatar': photoEditor.open(); break;
   }
   updateButtons();
 }
@@ -245,6 +248,8 @@ function readPresence(p) {
     nick: str(pr.nick, 12).trim() || '손님', color: typeof pr.color === 'string' && /^#[0-9a-f]{6}$/i.test(pr.color) ? pr.color : '#a9a8b8',
     has: typeof pr.x === 'number', x: clamp(num(pr.x, 0), -WORLD_R, WORLD_R), z: clamp(num(pr.z, 0), -WORLD_R, WORLD_R), ry: num(pr.ry, 0), y: clamp(num(pr.y, 0), 0, 3),
     sit: pr.sit === true, sy: clamp(num(pr.sy, 0.5), 0.3, 0.7), roast: clamp(num(pr.roast, -1), -1, 1), light: pr.light === true, mic: pr.mic === true,
+    face: typeof pr.face === 'string' && pr.face.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(pr.face) ? pr.face : '',
+    hair: typeof pr.hair === 'string' && /^#[0-9a-f]{6}$/i.test(pr.hair) ? pr.hair : '',
     say: str(pr.say, 60), sayAt: num(pr.sayAt, 0), emote: str(pr.emote, 12), emoteAt: num(pr.emoteAt, 0), react: EMOJIS.includes(pr.react) ? pr.react : '', reactAt: num(pr.reactAt, 0), fuelAt: num(pr.fuelAt, 0),
   };
 }
@@ -258,6 +263,7 @@ function applyPeer(p, quiet) {
     if (!quiet) { toast(`${s.nick} 님이 캠핑장에 왔어요`); logChat(s.nick, s.color, ' 님이 모닥불 곁으로 왔어요'); }
   }
   setLabel(av, s.nick, s.color, false, s.mic);
+  setFace(av, s.face, s.hair);
   av.tx = s.x; av.tz = s.z; av.try = s.ry; av.ty = s.y; av.sit = s.sit; av.sitY = s.sy; av.roast = s.roast; av.light = s.light;
   const now = performance.now();
   if (s.sayAt && s.sayAt !== av.lastSayAt) { av.lastSayAt = s.sayAt; if (s.say) { say(av, s.say, now); logChat(s.nick, s.color, s.say); } }
@@ -282,7 +288,7 @@ function wireNet() {
   if (!net) { setStatus('solo'); const v = document.querySelector('[data-act="voice"]'); if (v) v.hidden = true; return; }
   if (!net.voice) { const v = document.querySelector('[data-act="voice"]'); if (v) v.hidden = true; }
   const room = net.room; let first = true, offTimer = 0;
-  room.onConnection((c) => { clearTimeout(offTimer); if (c) { renderRoster(room.peers()); dirty = true; } else offTimer = setTimeout(() => setStatus('off'), 2000); }, () => setStatus('solo'));
+  room.onConnection((c) => { clearTimeout(offTimer); if (c) { renderRoster(room.peers()); dirty = true; if (joined) sendFace(); } else offTimer = setTimeout(() => setStatus('off'), 2000); }, () => setStatus('solo'));
   room.onPeers((ch) => {
     const quiet = first || !joined; first = false;
     ch.joined.forEach((p) => applyPeer(p, quiet)); ch.updated.forEach((p) => applyPeer(p, !joined));
@@ -296,22 +302,50 @@ function wireNet() {
   });
 }
 
+/* ---------------- 사진 캐릭터 ---------------- */
+let myFace = null; // { face, faceSmall, hair }
+let chosenColor = null;
+function applyMyFace(res) {
+  if (res) {
+    myFace = { face: res.face, faceSmall: res.faceSmall, hair: res.hair || '' };
+    if (res.shirt) { chosenColor = res.shirt; setLabel(me, me.nick, res.shirt, true); store.set('camp.color', res.shirt); }
+    store.set('camp.face', JSON.stringify(myFace));
+  } else { myFace = null; store.set('camp.face', ''); }
+  setFace(me, myFace ? myFace.face : null, myFace ? myFace.hair : null);
+  const th = $('#facethumb'); th.hidden = !myFace; if (myFace) th.src = myFace.face;
+  $('#photobtn').textContent = myFace ? '📷 사진 다시 고르기' : '📷 사진 한 장으로 캐릭터 만들기';
+  if (joined) { sendFace(); dirty = true; toast(myFace ? '사진으로 캐릭터를 만들었어요' : '사진을 지웠어요'); }
+}
+function sendFace() {
+  if (!net) return;
+  const face = myFace ? (net.kind === 'claude' ? myFace.faceSmall : myFace.face) : '';
+  net.room.presence({ face, hair: myFace ? myFace.hair : '', color: me.color }).catch(() => {});
+}
+function loadSavedFace() {
+  try { const v = JSON.parse(store.get('camp.face') || 'null'); if (v && typeof v.face === 'string' && typeof v.faceSmall === 'string') { myFace = v; setFace(me, v.face, v.hair); } } catch {}
+}
+const photoEditor = createPhotoEditor(applyMyFace);
+
 /* ---------------- 입장 ---------------- */
 function setupJoin(nick, color) {
   let chosen = color;
+  if (myFace) { const th = $('#facethumb'); th.hidden = false; th.src = myFace.face; $('#photobtn').textContent = '📷 사진 다시 고르기'; }
+  $('#photobtn').addEventListener('click', () => photoEditor.open());
   const box = $('#colors');
   COLORS.forEach((c) => {
     const b = document.createElement('button'); b.type = 'button'; b.style.background = c; b.setAttribute('aria-label', '색 ' + c); b.setAttribute('aria-pressed', String(c === chosen));
-    b.addEventListener('click', () => { chosen = c; me.body.color.set(c); box.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
+    b.addEventListener('click', () => { chosen = c; chosenColor = null; me.body.color.set(c); box.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
     box.append(b);
   });
   $('#nick').value = nick;
   $('#joinform').addEventListener('submit', (e) => {
     e.preventDefault();
     const n = $('#nick').value.replace(/\s+/g, ' ').trim().slice(0, 12) || nick;
+    if (chosenColor) { chosen = chosenColor; chosenColor = null; }
     store.set('camp.nick', n); store.set('camp.color', chosen);
     setLabel(me, n, chosen, true);
     joined = true; $('#join').hidden = true; canvas.focus(); dirty = true;
+    sendFace();
     toast(`${n} 님, 어서 오세요! 모닥불로 가 보세요`);
     if (!sound.on) { try { sound.start(); } catch {} }
     updateButtons();

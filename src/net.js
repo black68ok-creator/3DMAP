@@ -19,6 +19,8 @@ function p2pRoom() {
   let r;
   try { r = joinRoom({ appId: 'byeolbit-campground-3dmap-v2' }, roomName); } catch { return null; }
   const act = r.makeAction('pres');
+  const faceAct = r.makeAction('face'); // 얼굴 사진은 따로, 바뀔 때만 보낸다
+  let myFace = null;
   const others = new Map();
   const mine = {};
   let me = Object.freeze({ peer: selfId, by: null, isMe: true, sameTab: true, kind: 'viewer', guest: false, presence: {}, updatedAt: Date.now() });
@@ -40,6 +42,7 @@ function p2pRoom() {
   r.onPeerJoin = (id) => {
     if (!others.has(id)) { const p = mk(id, {}); others.set(id, p); fire({ joined: [p] }); }
     if (Object.keys(mine).length) act.send(mine, { target: id }).catch(() => {});
+    if (myFace) faceAct.send(myFace, { target: id }).catch(() => {});
     if (localStream) { try { r.addStream(localStream, { target: id }); } catch {} }
   };
   r.onPeerLeave = (id) => {
@@ -50,8 +53,15 @@ function p2pRoom() {
   act.onMessage = (data, ctx) => {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return;
     const id = ctx && ctx.peerId; if (typeof id !== 'string') return;
-    const had = others.has(id); const p = mk(id, data); others.set(id, p);
-    fire(had ? { updated: [p] } : { joined: [p] });
+    const prev = others.get(id); const keep = prev ? { face: prev.presence.face, hair: prev.presence.hair } : {};
+    const p = mk(id, { ...data, ...keep }); others.set(id, p);
+    fire(prev ? { updated: [p] } : { joined: [p] });
+  };
+  faceAct.onMessage = (data, ctx) => {
+    const id = ctx && ctx.peerId; if (typeof id !== 'string' || !data || typeof data !== 'object') return;
+    const prev = others.get(id);
+    const p = mk(id, { ...(prev ? prev.presence : {}), face: typeof data.face === 'string' ? data.face : '', hair: typeof data.hair === 'string' ? data.hair : '' });
+    others.set(id, p); fire(prev ? { updated: [p] } : { joined: [p] });
   };
   setInterval(() => { if (Object.keys(mine).length && others.size) act.send(mine).catch(() => {}); }, 3000);
   addEventListener('pagehide', () => { r.leave().catch(() => {}); });
@@ -80,6 +90,11 @@ function p2pRoom() {
     onConnection(fn) { queueMicrotask(() => fn(true)); return () => {}; },
     onPeers(fn) { peerFns.push(fn); queueMicrotask(() => fn({ peers: snapshot, joined: snapshot, left: [], updated: [] })); return () => {}; },
     presence(patch) {
+      if ('face' in patch) {
+        myFace = { face: patch.face || '', hair: patch.hair || '' };
+        if (others.size) faceAct.send(myFace).catch(() => {});
+        patch = { ...patch }; delete patch.face; delete patch.hair;
+      }
       for (const k in patch) { if (patch[k] === null) delete mine[k]; else mine[k] = patch[k]; }
       me = Object.freeze({ ...me, presence: Object.freeze({ ...mine }), updatedAt: Date.now() });
       rebuild();

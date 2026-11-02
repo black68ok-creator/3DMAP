@@ -108,7 +108,7 @@ export function createAvatar(scene, color, nick) {
     w: { idle: 1, walk: 0, run: 0, sit: 0, wave: 0, hold: 0, tuck: 0 },
     x: 0, z: 0, y: 0, ry: 0, tx: 0, tz: 0, try: 0, speed: 0,
     sit: false, sitY: 0.5, roast: -1, waveUntil: 0, jumpY: 0, light: false, lastSayAt: 0, lastEmoteAt: 0, lastReactAt: 0, lastFuelAt: 0,
-    stick, mallowMat, beam, torchLens,
+    stick, mallowMat, beam, torchLens, faceKey: '', faceParts: [],
   };
   setLabel(av, nick, color, true);
   return av;
@@ -129,7 +129,106 @@ export function react(av, emoji, now) {
 export function playEmote(av, name) {
   const a = av.act[name]; if (!a) return; a.reset(); a.setEffectiveWeight(1); a.play();
 }
+// 사진 얼굴: 머리 앞쪽 곡면에 사진을 입히고, 머리카락 색 캡을 씌운다
+const faceGeoCache = {};
+let faceAlphaTex = null;
+function faceAlpha() {
+  if (faceAlphaTex) return faceAlphaTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, 128, 128);
+  g.save(); g.translate(64, 64); g.scale(0.82, 1);
+  const gr = g.createRadialGradient(0, 0, 40, 0, 0, 63); gr.addColorStop(0, '#fff'); gr.addColorStop(1, '#000');
+  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 63, 0, Math.PI * 2); g.fill(); g.restore();
+  return (faceAlphaTex = new THREE.CanvasTexture(c));
+}
+// 머리 앞면 표면을 높이맵으로 떠서, 그 위에 딱 붙는 얼굴 판을 만든다
+function measureHead(model, hp) {
+  const v = new THREE.Vector3(), pts = [];
+  let minX = 1e9, maxX = -1e9, maxY = -1e9, minZ = 1e9, maxZ = -1e9;
+  model.traverse((o) => {
+    if (!o.isSkinnedMesh) return; const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      o.getVertexPosition(i, v); o.localToWorld(v); v.sub(hp);
+      if (v.y > 0.01 && Math.abs(v.x) < 0.2 && Math.abs(v.z) < 0.3) { pts.push(v.x, v.y, v.z); minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y); minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z); }
+    }
+  });
+  if (!pts.length) return { halfW: 0.09, top: 0.21, front: 0.14, back: -0.1, faceGeo: new THREE.PlaneGeometry(0.17, 0.17) };
+  const halfW = (maxX - minX) / 2, cx = (maxX + minX) / 2, midZ = (minZ + maxZ) / 2;
+  const W = halfW * 0.98, y0 = maxY * 0.08, y1 = Math.min(maxY * 0.98, y0 + W * 2.15);
+  const NX = 22, NY = 24, grid = new Float32Array((NX + 1) * (NY + 1)).fill(-1e9);
+  for (let i = 0; i < pts.length; i += 3) {
+    const x = pts[i], y = pts[i + 1], z = pts[i + 2]; if (z < midZ) continue;
+    const gx = Math.round(((x - cx + W) / (2 * W)) * NX), gy = Math.round(((y - y0) / (y1 - y0)) * NY);
+    if (gx < 0 || gx > NX || gy < 0 || gy > NY) continue;
+    const k = gy * (NX + 1) + gx; if (z > grid[k]) grid[k] = z;
+  }
+  // 빈 칸 채우기
+  for (let pass = 0; pass < 12; pass++) {
+    let empty = 0;
+    for (let gy = 0; gy <= NY; gy++) for (let gx = 0; gx <= NX; gx++) {
+      const k = gy * (NX + 1) + gx; if (grid[k] > -1e8) continue; empty++;
+      let sum = 0, n = 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x > NX || y > NY) continue; const q = grid[y * (NX + 1) + x]; if (q > -1e8) { sum += q; n++; } }
+      if (n) grid[k] = sum / n;
+    }
+    if (!empty) break;
+  }
+  // 한 번 부드럽게 (최댓값 쪽으로)
+  const g2 = grid.slice();
+  for (let gy = 0; gy <= NY; gy++) for (let gx = 0; gx <= NX; gx++) {
+    let m = grid[gy * (NX + 1) + gx]; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const x = gx + dx, y = gy + dy; if (x < 0 || y < 0 || x > NX || y > NY) continue; m = Math.max(m, grid[y * (NX + 1) + x] - 0.004); }
+    g2[gy * (NX + 1) + gx] = m;
+  }
+  grid.set(g2);
+  const geo = new THREE.PlaneGeometry(2 * W, y1 - y0, NX, NY);
+  const p = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < p.count; i++) {
+    const gx = i % (NX + 1), gyFromTop = Math.floor(i / (NX + 1)), gy = NY - gyFromTop;
+    const z = grid[gy * (NX + 1) + gx]; const x = cx - W + (gx / NX) * 2 * W, y = y0 + (gy / NY) * (y1 - y0);
+    p.setXYZ(i, x, y, (z > -1e8 ? z : midZ) + 0.006);
+    uv.setXY(i, gx / NX, gy / NY);
+  }
+  geo.computeVertexNormals();
+  return { halfW, top: maxY, front: maxZ, back: minZ, faceGeo: geo };
+}
+export function setFace(av, dataUrl, hair) {
+  const key = (dataUrl || '') + '|' + (hair || '');
+  if (av.faceKey === key) return;
+  av.faceKey = key;
+  av.faceParts.forEach((m) => { m.parent && m.parent.remove(m); if (m.material.map) m.material.map.dispose(); m.material.dispose(); });
+  av.faceParts = [];
+  if (!dataUrl) return;
+  const head = av.bones.head;
+  // 바인드 자세 기준으로 머리 크기를 재고(모델당 1회), 아바타 공간에 만든 뒤 머리 뼈에 붙인다
+  const saveP = av.root.position.clone(), saveR = av.root.rotation.y;
+  av.root.position.set(0, 0, 0); av.root.rotation.y = 0; av.root.updateMatrixWorld(true);
+  const hp = head.getWorldPosition(new THREE.Vector3());
+  if (!asset.head) asset.head = measureHead(av.model, hp);
+  const H = asset.head;
+  const yaw = 0;
+  const img = new Image();
+  const tex = new THREE.Texture(img); tex.colorSpace = THREE.SRGBColorSpace;
+  img.onload = () => { tex.needsUpdate = true; };
+  img.src = dataUrl;
+  const faceMat = new THREE.MeshStandardMaterial({ map: tex, alphaMap: faceAlpha(), transparent: true, roughness: 0.6, alphaTest: 0.02, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.22, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  const face = new THREE.Mesh(H.faceGeo, faceMat);
+  face.position.copy(hp); face.castShadow = true;
+  const parts = [face];
+  if (hair) {
+    const hairMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hair), roughness: 0.75 });
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 16, 0, Math.PI * 2, 0, 1.5), hairMat);
+    const depth = (H.front - H.back) / 2;
+    cap.position.set(hp.x, hp.y + H.top * 0.52, hp.z + (H.front + H.back) / 2 - 0.005); cap.rotation.x = -0.5; cap.castShadow = true;
+    cap.scale.set(H.halfW * 1.12, H.top * 0.56, depth * 1.08);
+    parts.push(cap);
+  }
+  av.root.add(...parts); av.root.updateMatrixWorld(true);
+  parts.forEach((m) => head.attach(m));
+  av.faceParts = parts;
+  av.root.position.copy(saveP); av.root.rotation.y = saveR; av.root.updateMatrixWorld(true);
+}
+
 export function disposeAvatar(av) {
+  setFace(av, null);
   disposeSprite(av.label); disposeSprite(av.bubble); av.emojis.forEach((e) => disposeSprite(e.s));
   av.mixer.stopAllAction(); av.root.parent && av.root.parent.remove(av.root);
   av.body.dispose();

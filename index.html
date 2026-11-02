@@ -83,6 +83,21 @@ button.active { background: rgba(217, 102, 42, 0.38); border-color: var(--ember)
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 13.5px; }
 .keys dt { color: var(--ember); font-family: var(--display); }
 .keys dd { margin: 0; color: var(--fg); }
+.photorow { display: flex; align-items: center; gap: 10px; }
+#facethumb { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--ember); }
+.photocard { width: min(480px, 100%); max-height: 92vh; overflow-y: auto; }
+.photowrap { display: flex; justify-content: center; }
+#photocanvas { max-width: 100%; border-radius: 10px; touch-action: none; cursor: grab; }
+#photosize { width: 100%; accent-color: var(--ember); }
+.filebtn { display: inline-flex; align-self: flex-start; padding: 9px 14px; border-radius: 11px; border: 1px solid var(--ember); background: var(--ember-deep); color: var(--fg); cursor: pointer; font-size: 14px; letter-spacing: 0; }
+.filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.filebtn:focus-within { outline: 2px solid var(--ember); outline-offset: 2px; }
+.swatches { display: flex; gap: 16px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+.swatches i { display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px; margin-left: 4px; border: 1px solid var(--panel-line); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button.primary { background: var(--ember-deep); border-color: var(--ember); font-family: var(--display); font-size: 16px; }
+.fine { font-size: 12px !important; }
+#photostep2 { display: flex; flex-direction: column; gap: 12px; }
 @media (max-width: 640px) { .brand h1 { font-size: 19px; } button kbd { display: none; } #minimap { width: 110px; height: 110px; } }
 @media (prefers-reduced-motion: reduce) { #chatlog div { animation: none; } }
 </style>
@@ -124,6 +139,7 @@ button.active { background: rgba(217, 102, 42, 0.38); border-color: var(--ember)
     <button data-act="fuel" type="button">🔥 장작 <kbd>G</kbd></button>
     <button data-act="light" type="button">🔦 손전등 <kbd>L</kbd></button>
     <span class="sep"></span>
+    <button data-act="avatar" type="button">📷 내 캐릭터</button>
     <button data-act="voice" type="button">🎙 음성 대화</button>
     <button data-act="night" type="button">🌗 낮/밤 <kbd>N</kbd></button>
     <button data-act="view" type="button">👁 1인칭 <kbd>V</kbd></button>
@@ -151,11 +167,37 @@ button.active { background: rgba(217, 102, 42, 0.38); border-color: var(--ember)
       <input id="nick" maxlength="12" required>
     </div>
     <div class="field">
+      <label>내 캐릭터</label>
+      <div class="photorow">
+        <img id="facethumb" alt="내 얼굴 사진" hidden>
+        <button id="photobtn" type="button">📷 사진 한 장으로 캐릭터 만들기</button>
+      </div>
+    </div>
+    <div class="field">
       <label>옷 색</label>
       <div class="colors" id="colors"></div>
     </div>
     <button id="enter" type="submit">캠핑장 들어가기</button>
   </form>
+</div>
+
+<div id="photoedit" class="overlay" hidden>
+  <div class="card panel photocard">
+    <h2>사진으로 캐릭터 만들기</h2>
+    <p id="photomsg"></p>
+    <label class="filebtn"><input id="photofile" type="file" accept="image/*">사진 고르기</label>
+    <div id="photostep2" hidden>
+      <div class="photowrap"><canvas id="photocanvas" width="300" height="300" aria-label="얼굴 위치 맞추기"></canvas></div>
+      <div class="field">
+        <label for="photosize">얼굴 크기</label>
+        <input id="photosize" type="range" min="5" max="50" value="20">
+      </div>
+      <div class="swatches"><span>머리카락 <i id="photohair"></i></span><span>옷 (점선 영역) <i id="photoshirt"></i></span></div>
+      <div class="row"><button id="photoapply" type="button" class="primary">이 얼굴로 만들기</button></div>
+    </div>
+    <div class="row"><button id="photoremove" type="button">사진 지우기</button><button id="photocancel" type="button">닫기</button></div>
+    <p class="fine">사진은 이 브라우저 안에서만 처리해요. 다른 캠퍼에게는 잘라낸 얼굴만 작게 전달돼요.</p>
+  </div>
 </div>
 
 <div id="help" class="overlay" hidden>
