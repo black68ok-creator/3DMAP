@@ -21,6 +21,10 @@ Riskiest assumption: 공용 Nostr 릴레이만으로 presence가 충분히 빠�
 
 화면 아래 로그 창에 릴레이 연결/거부 상태가 표시됩니다.
 
+## Artifact variant (`artifact.html`)
+claude.ai 아티팩트는 외부 WebSocket을 막아 Nostr 릴레이를 쓸 수 없으므로, 인원 공유를 아티팩트 `room` presence로 바꾼 버전입니다. 가설 (b) "함께 앉으면 더 오래 머무는가"를 바로 시험할 수 있고, 가설 (a) Nostr 검증은 `prototype.html`로만 가능합니다.
+- 공개 주소(비공개, 공유 메뉴에서 공유해야 다른 사람이 열 수 있음): https://claude.ai/artifact/7u8FJe1iM6P65r4SAMfDjz
+
 ## What it is
 - 지도: 스팟 2개(비 오는 편의점 앞, 새벽 산사), 불빛 수 = 90초 TTL 안의 고유 pubkey 수.
 - Presence: Nostr kind 30078 (parameterized replaceable, `d`/`t` 태그 + NIP-40 expiration), 30초 heartbeat, 세션 임시 키.
