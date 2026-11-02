@@ -1,0 +1,278 @@
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: 서버 없이 Nostr로 스팟별 인원수를 공유하면 "지도가 살아 있고, 함께 앉으면 더 오래 머문다"가 성립하는가? -->
+<!-- Date: 2026-11-02 -->
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>멍 지도 프로토타입</title>
+<style>
+  :root { --bg:#14181c; --card:#1f262c; --ink:#d9dee2; --dim:#7d8890; --warm:#ffb860; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  .wrap { max-width:520px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; font-weight:600; margin:8px 0 4px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:16px; }
+  .spot { background:var(--card); border-radius:14px; padding:16px; margin-bottom:12px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .spot:hover { outline:1px solid #34404a; }
+  .spot .name { font-size:16px; }
+  .spot .desc { color:var(--dim); font-size:12px; margin-top:4px; }
+  .lights { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; min-width:60px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--warm); box-shadow:0 0 10px var(--warm); }
+  .empty { color:var(--dim); font-size:12px; }
+  #room { display:none; }
+  canvas { width:100%; aspect-ratio:4/3; background:#0d1114; border-radius:14px; display:block; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  button { background:#2a333a; color:var(--ink); border:0; border-radius:10px; padding:10px 12px; font-size:14px; cursor:pointer; }
+  button.on { background:#4a3a22; color:#ffd9a8; }
+  .timer { font-size:28px; font-variant-numeric:tabular-nums; margin-top:12px; text-align:center; }
+  .log { color:var(--dim); font-size:11px; margin-top:16px; white-space:pre-wrap; max-height:140px; overflow:auto; background:#0d1114; border-radius:10px; padding:8px; }
+  .records { color:var(--dim); font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="map">
+    <h1>멍 지도</h1>
+    <div class="sub">불빛 하나 = 지금 그 자리에 앉아 있는 사람 하나 (서버 없음, Nostr 공용 릴레이)</div>
+    <div id="spots"></div>
+    <div class="records" id="records"></div>
+  </div>
+  <div id="room">
+    <h1 id="roomName"></h1>
+    <div class="sub" id="roomSub"></div>
+    <canvas id="cv" width="800" height="600"></canvas>
+    <div class="timer" id="timer">00:00</div>
+    <div class="row" id="layers"></div>
+    <div class="row">
+      <button id="nod">🙇 끄덕</button>
+      <button id="leave">일어나기</button>
+    </div>
+  </div>
+  <div class="log" id="log"></div>
+</div>
+
+<script type="module">
+// PROTOTYPE - NOT FOR PRODUCTION
+// Question: serverless Nostr presence + sitting together with place sounds
+// Date: 2026-11-02
+import { generateSecretKey, getPublicKey, finalizeEvent } from 'https://cdn.jsdelivr.net/npm/nostr-tools@2.25.2/+esm';
+
+const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://offchain.pub'];
+const APP_TAG = 'meongmap-proto-v1';
+const HEARTBEAT_S = 30;
+const TTL_S = 90;
+const SPOTS = {
+  cvs:    { name: '비 오는 편의점 앞', desc: '처마 끝 낙수, 냉장고 웅웅, 멀리 지나가는 차', seats: 6,
+            layers: ['빗소리', '처마 낙수', '냉장고', '지나가는 차'] },
+  temple: { name: '새벽 산사', desc: '산바람, 풍경 소리, 멀리 목탁, 새벽 새', seats: 6,
+            layers: ['산바람', '풍경', '목탁', '새소리'] },
+};
+
+const sk = generateSecretKey();
+const me = getPublicKey(sk);
+const logEl = document.getElementById('log');
+const log = (m) => { const t = new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${m}\n` + logEl.textContent; console.log(m); };
+log(`내 임시 키: ${me.slice(0, 8)}…`);
+
+// ---------- Nostr transport (raw websockets) ----------
+const sockets = new Map();       // url -> ws
+const presence = new Map();      // pubkey -> { spot, seat, at }
+const nods = [];                 // { pubkey, at }
+const now = () => Math.floor(Date.now() / 1000);
+
+function connect(url) {
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { log(`${url} 연결 실패`); return; }
+  sockets.set(url, ws);
+  ws.onopen = () => {
+    log(`${url} 연결됨`);
+    ws.send(JSON.stringify(['REQ', 'pres', { kinds: [30078], '#t': [APP_TAG], since: now() - TTL_S }]));
+    ws.send(JSON.stringify(['REQ', 'nod', { kinds: [20078], '#t': [APP_TAG], since: now() - 5 }]));
+    if (current) publishPresence();
+  };
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg[0] === 'EVENT') onEvent(msg[2], url);
+    else if (msg[0] === 'OK' && msg[2] === false) log(`${url} 거부: ${msg[3]}`);
+    else if (msg[0] === 'NOTICE') log(`${url} 알림: ${msg[1]}`);
+  };
+  ws.onclose = () => { log(`${url} 끊김 — 10초 뒤 재시도`); sockets.delete(url); setTimeout(() => connect(url), 10000); };
+  ws.onerror = () => {};
+}
+
+function onEvent(e) {
+  const tag = (k) => (e.tags.find((t) => t[0] === k) || [])[1];
+  if (e.kind === 30078) {
+    const spot = tag('spot');
+    const prev = presence.get(e.pubkey);
+    if (prev && prev.at > e.created_at) return;
+    presence.set(e.pubkey, { spot: spot === 'none' ? null : spot, seat: Number(tag('seat') || 0), at: e.created_at });
+    render();
+  } else if (e.kind === 20078 && tag('g') === 'nod') {
+    if (e.pubkey !== me) nods.push({ pubkey: e.pubkey, at: performance.now() });
+  }
+}
+
+function publish(template) {
+  const ev = finalizeEvent({ created_at: now(), content: '', ...template }, sk);
+  let sent = 0;
+  for (const ws of sockets.values()) if (ws.readyState === 1) { ws.send(JSON.stringify(['EVENT', ev])); sent++; }
+  return sent;
+}
+
+function publishPresence() {
+  const spot = current ? current.id : 'none';
+  const sent = publish({ kind: 30078, tags: [
+    ['d', APP_TAG], ['t', APP_TAG], ['spot', spot], ['seat', String(current ? current.seat : 0)],
+    ['expiration', String(now() + TTL_S)],
+  ] });
+  log(`presence 발행 (${spot}) → 릴레이 ${sent}곳`);
+}
+
+function alive() {
+  const cutoff = now() - TTL_S;
+  const out = {};
+  for (const [pk, p] of presence) if (p.spot && p.at >= cutoff) (out[p.spot] ||= []).push({ pk, ...p });
+  return out;
+}
+
+// ---------- Map ----------
+const records = JSON.parse(localStorage.getItem('meong-proto-records') || '[]');
+function render() {
+  const a = alive();
+  const box = document.getElementById('spots');
+  box.innerHTML = '';
+  for (const [id, s] of Object.entries(SPOTS)) {
+    const n = (a[id] || []).length;
+    const el = document.createElement('div');
+    el.className = 'spot';
+    el.innerHTML = `<div><div class="name">${s.name}</div><div class="desc">${s.desc}</div></div>
+      <div class="lights">${n ? Array.from({ length: n }, () => '<span class="dot"></span>').join('') : '<span class="empty">비어 있음</span>'}</div>`;
+    el.onclick = () => enter(id);
+    box.appendChild(el);
+  }
+  const total = records.reduce((t, r) => t + r.sec, 0);
+  document.getElementById('records').textContent = records.length
+    ? `내 기록: ${records.length}번 앉음 · 총 ${Math.round(total / 60)}분 · 함께 앉은 최대 ${Math.max(...records.map((r) => r.maxWith))}명`
+    : '';
+}
+setInterval(render, 5000);
+
+// ---------- Sound (Web Audio synthesis) ----------
+let ac, master;
+function noiseBuffer() {
+  const b = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function noiseSrc() { const s = ac.createBufferSource(); s.buffer = noiseBuffer(); s.loop = true; s.start(); return s; }
+function filt(type, f, q = 1) { const x = ac.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; }
+function gainNode(v) { const g = ac.createGain(); g.gain.value = v; return g; }
+
+function makeLayer(kind) {
+  const out = gainNode(0); out.connect(master);
+  const timers = [];
+  const ping = (fn, minMs, maxMs) => { const loop = () => { fn(); timers.push(setTimeout(loop, minMs + Math.random() * (maxMs - minMs))); }; loop(); };
+  const blip = (freq, dur, vol, type = 'sine', dest = out) => {
+    const o = ac.createOscillator(); o.type = type; o.frequency.value = freq;
+    const g = gainNode(0); o.connect(g); g.connect(dest);
+    const t = ac.currentTime; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o.stop(t + dur + 0.05);
+  };
+  switch (kind) {
+    case '빗소리': { const n = noiseSrc(); const f = filt('lowpass', 2500); const h = filt('highpass', 400); n.connect(h); h.connect(f); f.connect(gainNode(0.5)).connect(out); break; }
+    case '처마 낙수': ping(() => blip(900 + Math.random() * 900, 0.08, 0.25, 'triangle'), 250, 1400); break;
+    case '냉장고': { [55, 110, 165].forEach((fr, i) => { const o = ac.createOscillator(); o.frequency.value = fr; o.connect(gainNode(0.08 / (i + 1))).connect(out); o.start(); }); break; }
+    case '지나가는 차': { const n = noiseSrc(); const f = filt('lowpass', 300); const g = gainNode(0); n.connect(f); f.connect(g); g.connect(out);
+      ping(() => { const t = ac.currentTime; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.6, t + 3); g.gain.linearRampToValueAtTime(0, t + 7); }, 9000, 20000); break; }
+    case '산바람': { const n = noiseSrc(); const f = filt('bandpass', 500, 0.7); const g = gainNode(0.4); n.connect(f); f.connect(g); g.connect(out);
+      const lfo = ac.createOscillator(); lfo.frequency.value = 0.07; const lg = gainNode(0.3); lfo.connect(lg); lg.connect(g.gain); lfo.start(); break; }
+    case '풍경': ping(() => { const base = [1318, 1568, 1760, 2093][Math.floor(Math.random() * 4)]; blip(base, 3.5, 0.12); blip(base * 2.76, 1.2, 0.03); }, 3000, 9000); break;
+    case '목탁': ping(() => { blip(420, 0.15, 0.35, 'sine'); blip(840, 0.05, 0.1, 'square'); }, 2200, 2600); break;
+    case '새소리': ping(() => { const o = ac.createOscillator(); const g = gainNode(0); o.connect(g); g.connect(out); const t = ac.currentTime;
+      o.frequency.setValueAtTime(3000, t); o.frequency.exponentialRampToValueAtTime(4200, t + 0.12); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05, t + 0.02); g.gain.linearRampToValueAtTime(0, t + 0.15); o.start(t); o.stop(t + 0.2); }, 4000, 12000); break;
+  }
+  return { set(on) { out.gain.setTargetAtTime(on ? 1 : 0, ac.currentTime, 0.8); }, stop() { timers.forEach(clearTimeout); out.disconnect(); } };
+}
+
+// ---------- Room ----------
+let current = null, layers = [], hb = null, raf = null;
+function enter(id) {
+  if (!ac) { ac = new AudioContext(); master = gainNode(0.8); master.connect(ac.destination); }
+  ac.resume();
+  const taken = new Set((alive()[id] || []).map((p) => p.seat));
+  let seat = 0; while (taken.has(seat) && seat < SPOTS[id].seats - 1) seat++;
+  current = { id, seat, start: Date.now(), maxWith: (alive()[id] || []).filter((p) => p.pk !== me).length };
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('room').style.display = 'block';
+  document.getElementById('roomName').textContent = SPOTS[id].name;
+  document.getElementById('roomSub').textContent = '아무것도 안 해도 됩니다. 소리는 켜고 끌 수 있어요.';
+  const box = document.getElementById('layers'); box.innerHTML = '';
+  layers = SPOTS[id].layers.map((name, i) => {
+    const l = makeLayer(name); const on = i < 2; l.set(on);
+    const b = document.createElement('button'); b.textContent = name; b.className = on ? 'on' : '';
+    b.onclick = () => { const v = !b.classList.contains('on'); b.classList.toggle('on', v); l.set(v); };
+    box.appendChild(b); return l;
+  });
+  publishPresence();
+  hb = setInterval(publishPresence, HEARTBEAT_S * 1000);
+  draw();
+}
+function leave() {
+  const sec = Math.round((Date.now() - current.start) / 1000);
+  records.push({ spot: current.id, sec, maxWith: current.maxWith, at: Date.now() });
+  localStorage.setItem('meong-proto-records', JSON.stringify(records));
+  log(`도장: ${SPOTS[current.id].name} · ${sec}초 · 함께 최대 ${current.maxWith}명`);
+  layers.forEach((l) => l.stop()); clearInterval(hb); cancelAnimationFrame(raf);
+  current = null; publishPresence();
+  document.getElementById('room').style.display = 'none';
+  document.getElementById('map').style.display = 'block';
+  render();
+}
+document.getElementById('leave').onclick = leave;
+let lastNod = 0;
+document.getElementById('nod').onclick = () => {
+  if (Date.now() - lastNod < 5000) return; lastNod = Date.now(); // rate limit
+  publish({ kind: 20078, tags: [['t', APP_TAG], ['g', 'nod'], ['spot', current.id]] });
+  myNod = performance.now();
+};
+let myNod = -1e9;
+
+function draw() {
+  const cv = document.getElementById('cv'), g = cv.getContext('2d');
+  const W = cv.width, H = cv.height, t = performance.now();
+  const people = (alive()[current.id] || []);
+  current.maxWith = Math.max(current.maxWith, people.filter((p) => p.pk !== me).length);
+  g.fillStyle = '#0d1114'; g.fillRect(0, 0, W, H);
+  // breathing ambient
+  const br = 0.5 + 0.5 * Math.sin(t / 5000 * Math.PI * 2);
+  g.fillStyle = `rgba(80,110,130,${0.08 + br * 0.05})`; g.fillRect(0, 0, W, H);
+  const seats = SPOTS[current.id].seats;
+  for (let i = 0; i < seats; i++) {
+    const x = W * (0.15 + 0.7 * (i / (seats - 1))), y = H * 0.62;
+    g.fillStyle = '#222b31'; g.fillRect(x - 30, y + 18, 60, 10);
+    const p = people.find((q) => q.seat === i) || (i === current.seat ? { pk: me } : null);
+    if (!p) continue;
+    const isMe = p.pk === me;
+    const nodRecent = isMe ? t - myNod < 1500 : nods.some((n) => n.pubkey === p.pk && t - n.at < 1500);
+    const bob = nodRecent ? Math.sin((t % 1500) / 1500 * Math.PI * 2) * 8 : 0;
+    const grd = g.createRadialGradient(x, y, 0, x, y, 70);
+    grd.addColorStop(0, isMe ? 'rgba(255,214,150,0.55)' : 'rgba(255,184,96,0.55)'); grd.addColorStop(1, 'rgba(255,184,96,0)');
+    g.fillStyle = grd; g.beginPath(); g.arc(x, y, 70, 0, Math.PI * 2); g.fill();
+    g.fillStyle = isMe ? '#ffe0b0' : '#ffb860'; g.beginPath(); g.arc(x, y - 10 + bob, 14, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(x, y + 14, 16, 12, 0, 0, Math.PI * 2); g.fill();
+  }
+  const sec = Math.floor((Date.now() - current.start) / 1000); // wall clock
+  document.getElementById('timer').textContent = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+  raf = requestAnimationFrame(draw);
+}
+
+RELAYS.forEach(connect);
+render();
+window.__proto = { presence, alive, sockets, me };
+</script>
+</body>
+</html>
