@@ -8,6 +8,7 @@ framework:
   last_upgraded: 2026-10-19
 
 project:
+  name: "멍 지도"
   stage: Concept
 
 # NOTE: this template ships with no `modes:` block, and the six knobs below must
@@ -32,3 +33,38 @@ project:
 modes:
   rigor: full
   automation: guided
+
+platform:
+  multiplayer: true
+  online: true
+  targets: [Web, Mobile]     # Mobile = mobile browsers, not native apps
+  primary_input: "Touchscreen"
+  gamepad_support: "None"
+  touch_support: "Full"
+
+engine:
+  name: "threejs"            # not a CCGS-supported engine (Godot/Unity/Unreal); code root resolves to src/ by tree detection
+  version: "0.170.0"         # pinned in package.json
+  language: "JavaScript"
+  rendering: "WebGL2 (WebGLRenderer)"
+  physics: "None"
+
+specialists:                 # no three.js specialists exist; generic agents stand in
+  code: "gameplay-programmer"
+  shader: "technical-artist"
+  ui: "ui-programmer"
+  additional: ["network-programmer", "engine-programmer"]
+
+naming:
+  classes: PascalCase
+  variables: camelCase
+  constants: SCREAMING_SNAKE
+  signals: on_event_name     # JS event handlers: onEventName
+  files: camelCase
+  scenes: camelCase
+
+commands:                    # TODO: confirm these
+  build: "npm run build"
+  run: "npm run serve"
+  test: "[TO BE CONFIGURED]" # set by /test-setup
+  smoke: "npm run build"

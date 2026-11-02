@@ -10,54 +10,60 @@
 
 ## Engine & Language
 
-- **Engine**: [TO BE CONFIGURED — run /setup-engine]
-- **Language**: [TO BE CONFIGURED]
-- **Rendering**: [TO BE CONFIGURED]
-- **Physics**: [TO BE CONFIGURED]
+- **Engine**: threejs 0.170.0 (three.js r170, not a CCGS-supported engine)
+- **Language**: JavaScript (ES2020 modules, bundled by esbuild)
+- **Rendering**: WebGL2 (WebGLRenderer) + EffectComposer post-processing
+- **Physics**: None (heightmap/obstacle checks in game code)
 
 ## Input & Platform
 
 <!-- Written by /setup-engine. Read by /ux-design, /ux-review, /test-setup, /team-ui, and /dev-story -->
 <!-- to scope interaction specs, test helpers, and implementation to the correct input methods. -->
 
-- **Target Platforms**: [TO BE CONFIGURED — e.g., PC, Console, Mobile, Web]
-- **Input Methods**: [TO BE CONFIGURED — e.g., Keyboard/Mouse, Gamepad, Touch, Mixed]
-- **Primary Input**: [TO BE CONFIGURED — the dominant input for this game]
-- **Gamepad Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Touch Support**: [TO BE CONFIGURED — Full / Partial / None]
-- **Platform Notes**: [TO BE CONFIGURED — any platform-specific UX constraints]
+- **Target Platforms**: Web (mobile browsers first, desktop browsers supported)
+- **Input Methods**: Touch, Keyboard/Mouse
+- **Primary Input**: Touchscreen
+- **Gamepad Support**: None
+- **Touch Support**: Full
+- **Platform Notes**: iOS Safari audio unlock on tap, background/screen-off audio suspension, ITP storage eviction; GitHub Pages static hosting (no COOP/COEP headers)
 
 ## Naming Conventions
 
-- **Classes**: [TO BE CONFIGURED]
-- **Variables**: [TO BE CONFIGURED]
-- **Signals/Events**: [TO BE CONFIGURED]
-- **Files**: [TO BE CONFIGURED]
-- **Scenes/Prefabs**: [TO BE CONFIGURED]
-- **Constants**: [TO BE CONFIGURED]
+- **Classes**: PascalCase
+- **Variables**: camelCase
+- **Signals/Events**: onEventName handlers
+- **Files**: camelCase.js
+- **Scenes/Prefabs**: camelCase (scene builder functions, e.g. createSpot)
+- **Constants**: SCREAMING_SNAKE
 
 ## Performance Budgets
 
-- **Target Framerate**: [TO BE CONFIGURED]
-- **Frame Budget**: [TO BE CONFIGURED]
-- **Draw Calls**: [TO BE CONFIGURED]
-- **Memory Ceiling**: [TO BE CONFIGURED]
+- **Target Framerate**: 30 fps minimum on mid-range Android browser, 60 fps desktop
+- **Frame Budget**: [TO BE CONFIGURED — set in /create-architecture]
+- **Draw Calls**: [TO BE CONFIGURED — set in /create-architecture]
+- **Memory Ceiling**: [TO BE CONFIGURED — set in /create-architecture]
 
 ## Testing
 
-- **Framework**: [TO BE CONFIGURED]
+- **Framework**: [TO BE CONFIGURED — run /test-setup]
 - **Minimum Coverage**: [TO BE CONFIGURED]
 - **Required Tests**: Balance formulas, gameplay systems, networking (if applicable)
 
 ## Forbidden Patterns
 
 <!-- Add patterns that should never appear in this project's codebase -->
-- [None configured yet — add as architectural decisions are made]
+- WebRTC voice chat and any free-text chat (Pillar 2; no moderation without a server)
+- Operator-run servers or paid backends (zero operating cost constraint)
+- Changing three.js light count at runtime (shader recompile hitch) — use a fixed light pool
 
 ## Allowed Libraries / Addons
 
 <!-- Add approved third-party dependencies here -->
-- [None configured yet — add as dependencies are approved]
+- three 0.170.0
+- @dgreenheck/ez-tree 1.1.0
+- esbuild 0.24.0 (dev)
+- trystero 0.25.4 — legacy, slated for removal by the Nostr transport ADR
+- A Nostr client library — pending ADR
 
 ## Architecture Decisions Log
 
@@ -70,12 +76,12 @@
 <!-- Read by /code-review, /architecture-decision, /architecture-review, and team skills -->
 <!-- to know which specialist to spawn for engine-specific validation. -->
 
-- **Primary**: [TO BE CONFIGURED — run /setup-engine]
-- **Language/Code Specialist**: [TO BE CONFIGURED]
-- **Shader Specialist**: [TO BE CONFIGURED]
-- **UI Specialist**: [TO BE CONFIGURED]
-- **Additional Specialists**: [TO BE CONFIGURED]
-- **Routing Notes**: [TO BE CONFIGURED]
+- **Primary**: technical-director (no three.js specialist exists)
+- **Language/Code Specialist**: gameplay-programmer
+- **Shader Specialist**: technical-artist
+- **UI Specialist**: ui-programmer
+- **Additional Specialists**: network-programmer, engine-programmer
+- **Routing Notes**: Engine-agnostic agents stand in for engine specialists; they must read docs/engine-reference/threejs/VERSION.md before suggesting three.js APIs
 
 ### File Extension Routing
 
@@ -84,9 +90,9 @@
 
 | File Extension / Type | Specialist to Spawn |
 |-----------------------|---------------------|
-| Game code (primary language) | [TO BE CONFIGURED] |
-| Shader / material files | [TO BE CONFIGURED] |
-| UI / screen files | [TO BE CONFIGURED] |
-| Scene / prefab / level files | [TO BE CONFIGURED] |
-| Native extension / plugin files | [TO BE CONFIGURED] |
+| Game code (`src/*.js`) | gameplay-programmer |
+| Shader / material code (GLSL in JS, post-processing) | technical-artist |
+| UI / screen files (`index.html`, DOM UI) | ui-programmer |
+| Scene builders (`src/world.js` etc.) | gameplay-programmer |
+| Network transport (`src/net.js`) | network-programmer |
 | General architecture review | Primary |

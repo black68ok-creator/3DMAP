@@ -5,11 +5,11 @@ Each agent owns a specific domain, enforcing separation of concerns and quality.
 
 ## Technology Stack
 
-- **Engine**: [CHOOSE: Godot 4 / Unity / Unreal Engine 5]
-- **Language**: [CHOOSE: GDScript / C# / C++ / Blueprint]
+- **Engine**: three.js 0.170.0 (web; not a CCGS-supported engine — see `docs/engine-reference/threejs/VERSION.md`)
+- **Language**: JavaScript (ES modules)
 - **Version Control**: Git with trunk-based development
-- **Build System**: [SPECIFY after choosing engine]
-- **Asset Pipeline**: [SPECIFY after choosing engine]
+- **Build System**: esbuild (`npm run build` → `app.js`, committed for GitHub Pages)
+- **Asset Pipeline**: static files in `assets/` (glTF/glb, textures), procedural geometry and Web Audio synthesis in code
 
 > **Note**: Engine-specialist agents exist for Godot, Unity, and Unreal with
 > dedicated sub-specialists. Use the set matching your engine.
@@ -26,7 +26,7 @@ Each agent owns a specific domain, enforcing separation of concerns and quality.
      session. It defaults to Godot (the template's example engine); skills that
      need the pinned version read docs/engine-reference/<engine>/VERSION.md on
      demand regardless of this import. -->
-@docs/engine-reference/godot/VERSION.md
+@docs/engine-reference/threejs/VERSION.md
 
 
 ## Technical Preferences
